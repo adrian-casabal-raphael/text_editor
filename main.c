@@ -196,8 +196,9 @@ int editorRowRxToCx(erow *row, int rx) {
     int cur_rx = 0;
     int cx;
     for (cx = 0; cx < row->size; ++cx) {
-        if (row->chars[cx] == '\t') cur_rx += (KILO_TAB_STOP - 1) - (cur_rx % KILO_TAB_STOP);
-        ++cur_rx;
+        if (row->chars[cx] == '\t')
+            cur_rx += (KILO_TAB_STOP - 1) - (cur_rx % KILO_TAB_STOP);
+        cur_rx++;
         if (cur_rx > rx) return cx;
     }
     return cx;
@@ -397,22 +398,58 @@ void editorSave() {
 }
 
 /*** find ***/
-void editorFind() {
-    char *query = editorPrompt("Search: %s (ESC to cancel)", NULL);
-    if (query == NULL) return;
+void editorFindCallback(char *query, int key) {
+    static int last_match = -1;
+    static int direction = 1;
+
+    if (key == '\r' || key == '\x1b') {
+        last_match = -1;
+        direction = 1;
+        return;
+    } else if (key == ARROW_RIGHT || key == ARROW_DOWN) {
+        direction = 1;
+    } else if (key == ARROW_LEFT || key == ARROW_UP) {
+        direction = -1;
+    } else {
+        last_match = -1;
+        direction = 1;
+    }
+
+    if (last_match == -1) direction = 1;
+    int current = last_match;
 
     int i;
     for (i = 0; i < E.numrows; ++i) {
-        erow *row = &E.row[i];
+        current += direction;
+        if (current == -1) current = E.numrows - 1;
+        else if (current == E.numrows) current = 0;
+        erow *row = &E.row[current];
         char *match = strstr(row->render, query);
         if (match) {
-            E.cy = i;
+            last_match = current;
+            E.cy = current;
             E.cx = editorRowRxToCx(row, match - row->render);
             E.rowoff = E.numrows;
             break;
         }
     }
-    free(query);
+}
+
+void editorFind() {
+    int saved_cx = E.cx;
+    int saved_cy = E.cy;
+    int saved_coloff = E.coloff;
+    int saved_rowoff = E.rowoff;
+
+    char *query = editorPrompt("Search: %s (Use ESC/Arrows/Enter)", editorFindCallback);
+    if (query) {
+        free(query);
+    } else {
+        E.cx = saved_cx;
+        E.cy = saved_cy;
+        E.coloff = saved_coloff;
+        E.rowoff = saved_rowoff;
+    }
 }
 
 /*** append buffer ***/
@@ -442,36 +479,35 @@ char *editorPrompt(char *prompt, void (*callback)(char *, int)) {
     size_t buflen = 0;
     buf[0] = '\0';
 
-    while(1) {
+    while (1) {
         editorSetStatusMessage(prompt, buf);
         editorRefreshScreen();
         int c = editorReadKey();
         if (c == DEL_KEY || c == CTRL_KEY('h') || c == BACKSPACE) {
             if (buflen != 0) buf[--buflen] = '\0';
-        }
-        else if (c == '\x1b') {
+        } else if (c == '\x1b') {
             editorSetStatusMessage("");
             if (callback) callback(buf, c);
             free(buf);
             return NULL;
-        }
-        else if (c == '\r') {
+        } else if (c == '\r') {
             if (buflen != 0) {
                 editorSetStatusMessage("");
                 return buf;
             }
-        }
-        else if (!iscntrl(c) && c < 128) {
+        } else if (!iscntrl(c) && c < 128) {
             if (buflen == bufsize - 1) {
                 bufsize *= 2;
                 buf = realloc(buf, bufsize);
             }
-            buf[++buflen] = c;
+            buf[buflen++] = c;
             buf[buflen] = '\0';
         }
         if (callback) callback(buf, c);
     }
 }
+
+
 void editorMoveCursor(int key) {
     erow *row = (E.cy >= E.numrows) ? NULL : &E.row[E.cy];
 
@@ -675,7 +711,9 @@ void editorDrawMessageBar(struct abuf *ab) {
     abAppend(ab, "\x1b[K", 3);
     int msglen = strlen(E.statusmsg);
     if (msglen > E.screencols) msglen = E.screencols;
-    if (msglen && time(NULL) - E.statusmsg_time < 5) abAppend(ab, E.statusmsg, msglen);
+    if (msglen && time(NULL) - E.statusmsg_time < 5) {
+         abAppend(ab, E.statusmsg, msglen);
+    }
 }
 
 void editorRefreshScreen() {
